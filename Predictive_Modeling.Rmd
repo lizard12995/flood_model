@@ -19,11 +19,12 @@ library(knitr)
 
 # 1. Introduction
 
+Urban flooding is a complicated issue that requires special care. Flooding, especially in low-lying locations and near rivers, can have devastating consequences for communities, including loss of life and property. With meteorological events growing in severity under climate change, we must prepare our communities for the possibility of flooding by understanding why inundation occurs where it does and using that information to predict where inundation might occur in cities where existing flooding data is scarce. In an ideal world, every community would have a Flooding Modeling & Planning Center in-house, or access to one at the regional or state level, that possesses the data and modeling capacity to predict future inundation based on past events and present conditions. 
 
-[DEVON WRITE HERE]
+We had data on past flooding events within Calgary, a Canadian city that experiences riverine flooding during major storm events. Calgary is the largest city in Alberta, a plains province, and home to the nation's lucrative oil and gas industries. We gathered data on Calgary and developed a model that could potentially predict flooding in its distance twin city, Edmonton, located further north in Alberta with a slightly lower population (Calgary proper hosts about 1.4 million people in a 1.5 million-person metro area while Edmonton hosts about 1.1 million people in a 1.4 million-person metro area). In Calgary, the Bow River bisects the community, running through its central districts, with significant development on either side. In Edmonton, the North Saskatchewan River bisects it, with creeks and lakes running in the northwest. Because of these similarities, we decided to use the data we had available for Calgary, including Elevation, Land Cover, and hydrographic features both found and derived to predict inundation patterns in Edmonton. The two are often studied together as part of a megaregion, with the smaller city of Red Deer roughly equidistant between the them.
 
 
-## 1.1. Setup
+## 1.1. Setup - Collecting all the packages we might utilize
 
 
 ```{r libraries, warning = FALSE, message = FALSE}
@@ -82,6 +83,14 @@ plotTheme <- theme(
 We gather open data from both Calgary’s open data site (https://data.calgary.ca/) and Edmonton's open data site.
 
 Variables we are considering are:
+- Percent Impermeable Surface (imp): a measure of how much surface within a fishnet square is impermeable. We gathered land cover data for both Calgary and Edmonton and reclassified the land cover options as either permeable (0) or impermeable (1). We hypothesize that more impermeable surface will lead to a higher likelihood of inundation, all else held constant, because the water cannot permeate underground.
+- Mean Impermeable Surface of Nearest Neighbors (nn_imp): in R, we performed nearest neighbors analysis to affix the mean percentage of impermeable surface of each fishnet square's 8 nearest neighbors. We hypothesize that more impermeable surface in the nearest neighbors will lead to a higher likelihood of inundation, all else held constant, because the water cannot permeate underground in that vicinity.
+- Distance to Stream/Water Feature (dist_stream): we calculated the nearest distance a fishnet square observes to a stream/water feature in ArcGIS. We hypothesize that the closer a feature is to a water feature, the more likely it is to observe inundation, because the overtopping of existing water features results in water spilling into nearby geographies. We considered log transforming this feature, but doing so results in problems at the 0 bound.
+- Maximum Slope Value (max_slope): we calculated the maximum slope observed within a fishnet square using zonal statistics from our DEM. We hypothesize that the higher the slope (in degrees) observed in a fishnet square, the less likely it is to experience inundation, because water can more easily run off of surfaces that are at a more extreme slope.
+- Mean Maximum Slope Value of Nearest Neighbors (nn_slope): in R, we performed nearest neighbors analysis to affix the mean max_slope value of the 8 nearest neighbors to a given fishnet square to that fishnet square. We hypothesize that the higher the nn_slope, the less likely it is to experience inundation, because higher neighborhood slope values suggest a larger surface of extreme slopes where water can run off. 
+- Difference between nn_slope and max_slope (slope_diff): we consider the different between the nearest neighbors mean of maximum slope and the maximum slope of the given fishnet square in case there are extreme discrepancies between the two that may be flattened in nearest neighbors analysis. We hypothesize that the higher the difference, the higher the likelihood of inundation, because there is a significantly flatter surface that will observe inundation from the sloped surfaces nearby.
+- Mean elevation of a fishnet square (mean_elev): we have the DEM, so we take the mean elevation within the fishnet square as the meaningful measure of center. We hypothesize that the higher the mean elevation, the less likely the square is to observe inundation, because water will runoff down sloped surfaces towards the areas of lowest elevation. To mitigate inherent differences in elevation between Calgary and Edmonton, we do log transform this variable. 
+- Mean of log mean elevation of the 8 nearest neighbors (nn_log_mean_elev): we performed nearest neighbors analysis to get the spatial lag for log mean elevation in each city, with the expectation that the higher the value, the higher the likelihood of inundation due to its inherent higher elevation. Low-lying areas, especially near riverbanks, are likeliest to flood.
 
 
 ```{r}
@@ -386,4 +395,73 @@ calgary3 %>%
 ```
 
 Finally, let's try out our model on Edmonton!
+
+#bringing in Edmonton data, matching data projection, and clipping extent to city boundaries
+edmonton<-st_read("C:\\Users\\dchod\\OneDrive\\Documents\\GradY2\\Modeling\\Midterm\\Attempt5\\edmnet41.shp")
+ecity_bounds<-st_read("C:\\Users\\dchod\\OneDrive\\Documents\\GradY2\\Modeling\\Midterm\\Edmonton\\geo_export_dc7e3693-8d53-4ccf-bd29-36255ee87cf6.shp")
+st_geometry(edmonton) <- "geometry"
+ecity_bounds <- st_transform(ecity_bounds, crs = st_crs(edmonton))
+edmonton <- st_intersection(edmonton, ecity_bounds)
+#plotting the Edmonton fishnet
+ggplot() +
+  geom_sf(data = ecity_bounds)+
+  geom_sf(data = edmonton, 
+          fill = "dark green", 
+          color = "dark green",
+          alpha = 0.6) +
+  labs(title="Edmonton City Bounds and Fishnet Bounds") +
+  mapThemec
+#renaming columns,adding log transformed variables
+edmonton <- rename(edmonton, imp=MEAN_1, dist_stream=diststream, mean_elev=MEAN, max_slope=MAX)
+# pulling out polygon and identifiers to reattach later
+edm_poly <- edmonton%>% 
+  select(OBJECTID, geometry)
+#performing nearest neighbor operation to get additional dependent variables
+edmonton <- st_centroid(edmonton)
+knn <- st_knn(edmonton, k = 8)
+nn_indices <- knn$nn_index
+wt <- knn$nn_dist
+edmonton <- edmonton %>%
+  filter(mean_elev >0) %>%
+  mutate(log_mean_elev = log(mean_elev),
+         nb = st_knn(geometry, k=8),
+         wt = st_weights(nb),
+         nn_log_mean_elev = st_lag(log_mean_elev,nb,wt),
+         nn_slope = st_lag(max_slope,nb,wt),
+         nn_imp = st_lag(imp,nb,wt),
+         slope_diff = nn_slope - max_slope,
+         elev_diff = log_mean_elev - nn_log_mean_elev)
+#developing a dataframe that only has the variables of interest
+edmonton2 <- 
+  edmonton %>%
+  select(imp, dist_stream, max_slope, nn_slope, slope_diff, log_mean_elev, nn_log_mean_elev, elev_diff, OBJECTID_2,nn_imp)%>%
+  st_drop_geometry()
+edmonton2 <- rename(edmonton2, OBJECTID=OBJECTID_2)
+#using the predict command with Edmonton data
+edm_predictions <- predict(calgModel, newdata = edmonton2, type = "response")
+summary(edm_predictions)
+hist(edm_predictions)
+allPredictions <- 
+  predict(cvFit, edmonton2,type="prob")[,2]
+
+fishnet_df <- 
+  cbind(edmonton2,allPredictions)%>%
+  st_drop_geometry()
+
+fishnet_df <- fishnet_df %>%
+  left_join(edm_poly, by="OBJECTID")
+
+st_geometry(fishnet_df) <- "geometry"
+
+#plotting the predicted values based on the Calgary model
+ggplot() +
+  geom_sf(data=fishnet_df, aes(fill=factor(ntile(allPredictions,5))),
+          colour=NA) +
+  scale_fill_manual(values = c("#edf8fb","#b3cde3","#8c96c6","#8856a7","#810f7c"),
+                    labels=as.character(quantile(fishnet_df$allPredictions,
+                                                 c(0.1,.2,.4,.6,.8),
+                                                 na.rm=T)),
+                    name="Predicted\nProbabilities(%)\n(Quintile\nBreaks)") +
+  mapThemec +
+  labs(title="")
 
