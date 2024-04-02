@@ -43,7 +43,7 @@ library(sfdep)
 
 
 ```{r mapTheme, echo=TRUE}
-mapTheme <- theme(plot.title =element_text(size=12),
+mapThemec <- theme(plot.title =element_text(size=12),
                   plot.subtitle = element_text(size=8),
                   plot.caption = element_text(size = 6),
                   axis.line=element_blank(),
@@ -61,7 +61,7 @@ mapTheme <- theme(plot.title =element_text(size=12),
                   plot.margin = margin(1, 1, 1, 1, 'cm'),
                   legend.key.height = unit(1, "cm"), legend.key.width = unit(0.2, "cm"))
 
-plotTheme <- theme(
+plotThemec <- theme(
   plot.title =element_text(size=12),
   plot.subtitle = element_text(size=8),
   plot.caption = element_text(size = 6),
@@ -118,7 +118,7 @@ ggplot() +
           color = "dark green",
           alpha = 0.6) +
   labs(title="Calgary City Bounds and Fishnet Bounds") +
-  mapTheme
+  mapThemec
 ```
 
 Here, we can see what previous inundation within the fishnet study area has looked like. Inundation is classified as areas where the percent of the fishnet square that was inundated is greater than zero.
@@ -138,7 +138,7 @@ calgary <- calgary %>%
 ggplot() + 
   geom_sf(data=calgary, aes(fill=inundation), color = "transparent") +
   labs(title="Calgary (Fishnet)") +
-  mapTheme
+  mapThemec
 
 ```
 
@@ -180,7 +180,7 @@ ggplot(calgaryPlotVariables) +
      scale_fill_manual(values = c("dark green", "dark blue"),
      labels = c("Not Inundated","Inundated"), name = "") +
      labs(x="Inundated", y="Value") + 
-  plotTheme
+  plotThemec
 ```
 
 # 4. Data wrangling
@@ -256,7 +256,7 @@ ggplot(testProbs, aes(x = pred, fill=as.factor(obs))) +
   scale_fill_manual(values = c("dark green", "dark blue"),
                       labels = c("Not Inundated","Inundated"),
                       name = "")+
-  plotTheme
+  plotThemec
 ```
 
 ### 5.3.1 Confusion metrics
@@ -321,7 +321,7 @@ ggplot(as.data.frame(cvFit$resample), aes(Accuracy)) +
   scale_x_continuous(limits = c(0, 1)) +
   labs(x="Accuracy",
        y="Count")+
-  plotTheme
+  plotThemec
 ```
 
 
@@ -350,7 +350,7 @@ Now we map the predictions.
                                                  c(0.1,.2,.4,.6,.8),
                                                  na.rm=T)),
                       name="Predicted\nProbabilities(%)\n(Quintile\nBreaks)") +
-  mapTheme +
+  mapThemec +
   labs(title="")
 ```
 
@@ -367,7 +367,7 @@ Mapping again with previous inundation:
   geom_sf(data=calgary  %>% 
                filter(inundation == 1), 
                fill="dark blue", colour=NA) +
-  mapTheme +
+  mapThemec +
   labs(title="Observed and Predicted Inundation",
        subtitle="Calgary; Previous inundation in Blue")
 ```
@@ -390,7 +390,7 @@ calgary3 %>%
   scale_fill_manual(values = c("Red","Orange","Light Blue","Light Green"),
                     name="Outcomes")+
   labs(title="Confusion Metrics") +
-  mapTheme
+  mapThemec
 
 ```
 
@@ -402,6 +402,7 @@ ecity_bounds<-st_read("C:\\Users\\dchod\\OneDrive\\Documents\\GradY2\\Modeling\\
 st_geometry(edmonton) <- "geometry"
 ecity_bounds <- st_transform(ecity_bounds, crs = st_crs(edmonton))
 edmonton <- st_intersection(edmonton, ecity_bounds)
+
 #plotting the Edmonton fishnet
 ggplot() +
   geom_sf(data = ecity_bounds)+
@@ -411,12 +412,15 @@ ggplot() +
           alpha = 0.6) +
   labs(title="Edmonton City Bounds and Fishnet Bounds") +
   mapThemec
+
 #renaming columns,adding log transformed variables
 edmonton <- rename(edmonton, imp=MEAN_1, dist_stream=diststream, mean_elev=MEAN, max_slope=MAX)
+
 # pulling out polygon and identifiers to reattach later
 edm_poly <- edmonton%>% 
   select(OBJECTID, geometry)
-#performing nearest neighbor operation to get additional dependent variables
+
+#performing nearest neighbor operation to get additional independent variables
 edmonton <- st_centroid(edmonton)
 knn <- st_knn(edmonton, k = 8)
 nn_indices <- knn$nn_index
@@ -431,12 +435,14 @@ edmonton <- edmonton %>%
          nn_imp = st_lag(imp,nb,wt),
          slope_diff = nn_slope - max_slope,
          elev_diff = log_mean_elev - nn_log_mean_elev)
+
 #developing a dataframe that only has the variables of interest
 edmonton2 <- 
   edmonton %>%
   select(imp, dist_stream, max_slope, nn_slope, slope_diff, log_mean_elev, nn_log_mean_elev, elev_diff, OBJECTID_2,nn_imp)%>%
   st_drop_geometry()
 edmonton2 <- rename(edmonton2, OBJECTID=OBJECTID_2)
+
 #using the predict command with Edmonton data
 edm_predictions <- predict(calgModel, newdata = edmonton2, type = "response")
 summary(edm_predictions)
